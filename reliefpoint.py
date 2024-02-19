@@ -1,6 +1,10 @@
 import pandas as pd
 import numpy as np
 import math
+import glob
+import os
+import zipfile
+
 
 # Function to process each table
 def process_table(df):
@@ -28,7 +32,7 @@ def process_table(df):
     header_rows = [['Service ID', service_id], ['Pattern', pattern]]
     header_df = pd.DataFrame(header_rows, columns=['Info', 'Value'])
 
-    standard_time_intervals = ['0000-0059', '0100-0159', '0200-0259', '0300-0359', '0400-0459', '0500-0559', '0600-0659', '0700-0759', '0800-0859', '0900-0959', '1000-1059', '1100-1159', '1200-1259', '1300-1359', '1400-1459', '1500-1559', '1600-1659', '1700-1759', '1800-1859', '1900-1959', '2000-2059', '2100-2159', '2200-2259', '2300-2359']
+    standard_time_intervals = ['0000-0559', '0600-0659', '0700-0729', '0730-0744', '0745-0759', '0800-0814', '0815-0829', '0830-0844', '0845-0859', '0900-0929', '0930-1159', '1200-1359', '1400-1529', '1530-1629', '1630-1659', '1700-1729', '1730-1759', '1700-1759', '1800-1829', '1830-1929', '1930-2059', '2100-3559']
 
     def calculate_average_for_hour_block_corrected(hour_block, block_df):
         hour_block_start, hour_block_end = map(lambda x: int(x), hour_block.split('-'))
@@ -63,8 +67,8 @@ def process_table(df):
     return final_df
 
 # Define a function to process a given sheet and return the processed DataFrame
-def process_sheet(sheet_name):
-    df = pd.read_excel(file_path, sheet_name=sheet_name)
+def process_sheet(sheet_name, file_path):  # Add file_path as a second parameter
+    df = pd.read_excel(file_path, sheet_name=sheet_name, engine='openpyxl')  # Use the file_path parameter here
     processed_tables = []
     processing_table = False
     current_table = []
@@ -89,17 +93,56 @@ def process_sheet(sheet_name):
     final_df = pd.concat(processed_tables, ignore_index=True)
     return final_df
 
-# Specify the Excel file path
-file_path = '/Users/hugo.cooke/Desktop/test/2copy.xlsx'
+def process_all_sheets(file_path):
+    xl = pd.ExcelFile(file_path, engine='openpyxl')  # Use 'openpyxl' engine for reading .xlsx files
+    sheet_names = [name for name in xl.sheet_names if "travel times " in name.lower()]
+    outbound_dfs = []
+    inbound_dfs = []
+    
+    for sheet_name in sheet_names:
+        try:
+            df = process_sheet(sheet_name, file_path)
+            if not df.empty:  # Check if the dataframe is empty
+                if "outbound" in sheet_name.lower():
+                    outbound_dfs.append(df)
+                elif "inbound" in sheet_name.lower():
+                    inbound_dfs.append(df)
+        except Exception as e:
+            print(f"Skipping sheet '{sheet_name}' due to error: {e}")
+            continue
+    
+    # Initialize empty dataframes if no sheets were processed successfully
+    if not outbound_dfs:
+        outbound_df = pd.DataFrame()
+    else:
+        outbound_df = pd.concat(outbound_dfs, ignore_index=True)
+    
+    if not inbound_dfs:
+        inbound_df = pd.DataFrame()
+    else:
+        inbound_df = pd.concat(inbound_dfs, ignore_index=True)
+    
+    return outbound_df, inbound_df
 
-# Process both sheets
-outbound_df = process_sheet('Travel times Outbound')
-inbound_df = process_sheet('Travel times Inbound')
+# Loop through all .xlsx files in the specified folder
+folder_path = '/Users/hugo.cooke/Desktop/test'  # Adjust the folder path as necessary
+for file_path in glob.glob(os.path.join(folder_path, '*.xlsx')):
+    try:
+        outbound_df, inbound_df = process_all_sheets(file_path)
 
-# Save the DataFrames to separate sheets within the same Excel file
-output_file_path = '/Users/hugo.cooke/Desktop/test/cleaned.xlsx'
-with pd.ExcelWriter(output_file_path, engine='openpyxl') as writer:
-    outbound_df.to_excel(writer, sheet_name='Outbound', index=False)
-    inbound_df.to_excel(writer, sheet_name='Inbound', index=False)
+        # Generate a new output filename by appending '_cleaned' before the file extension
+        base_filename = os.path.basename(file_path)
+        name_part, extension_part = os.path.splitext(base_filename)
+        output_filename = f"{name_part}_cleaned{extension_part}"
+        output_file_path = os.path.join(folder_path, output_filename)
 
-print(f"Data has been cleaned and saved to {output_file_path}")
+        # Save the processed data to a new file
+        with pd.ExcelWriter(output_file_path, engine='openpyxl') as writer:
+            outbound_df.to_excel(writer, sheet_name='Outbound', index=False)
+            inbound_df.to_excel(writer, sheet_name='Inbound', index=False)
+
+        print(f"Data has been cleaned and saved to {output_file_path}")
+    except zipfile.BadZipFile:
+        print(f"Skipping file due to error (not a zip file): {file_path}")
+    except Exception as e:
+        print(f"Skipping file due to unexpected error: {file_path}, Error: {e}")
